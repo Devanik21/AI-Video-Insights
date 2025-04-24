@@ -4,10 +4,8 @@ moviepy
 gTTS
 pydub
 whisper
-transformers
-torch
+pytube
 langdetect
-nltk
 scikit-learn
 matplotlib
 seaborn
