@@ -5,8 +5,6 @@ gTTS
 pydub
 whisper
 pytube
-langdetect
-scikit-learn
-matplotlib
-seaborn
-plotly
+yt-dlp
+requests
+
