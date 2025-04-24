@@ -1,0 +1,14 @@
+streamlit
+google-generativeai
+moviepy
+gTTS
+pydub
+whisper
+transformers
+torch
+langdetect
+nltk
+scikit-learn
+matplotlib
+seaborn
+plotly
