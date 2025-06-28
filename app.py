@@ -64,10 +64,15 @@ def download_and_transcribe(video_url):
 
         # Download video
         yt = YouTube(canonical_url)
-        stream = yt.streams.filter(only_audio=True).first()
-
+        # Prefer audio/mp4, fallback to any audio
+        audio_streams = yt.streams.filter(only_audio=True).order_by('abr').desc()
+        stream = None
+        for s in audio_streams:
+            if s.mime_type in ["audio/mp4", "audio/webm"]:
+                stream = s
+                break
         if not stream:
-            st.error("Could not find an audio stream for this video")
+            st.error("Could not find a suitable audio stream for this video (no audio/mp4 or audio/webm found).")
             return None, None
 
         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -86,7 +91,9 @@ def download_and_transcribe(video_url):
         if "regex_search" in str(e):
             st.error("Failed to process the YouTube link. Please check the URL format.")
         elif "HTTP Error 400" in str(e):
-            st.error("YouTube returned a 400 error. The video may not exist or is unavailable.")
+            st.error("YouTube returned a 400 error. The video may not exist, is private, age-restricted, or region-blocked.")
+        elif "Video unavailable" in str(e):
+            st.error("The video is unavailable. It may be private, deleted, or restricted.")
         else:
             st.error(f"Error processing video: {str(e)}")
         return None, None
