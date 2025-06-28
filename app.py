@@ -12,6 +12,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Page Config ---
+@st.cache_resource
+def load_whisper_model():
+    """Loads the Whisper model and caches it across reruns."""
+    logger.info("Loading Whisper model...")
+    model = whisper.load_model("base")
+    logger.info("Whisper model loaded.")
+    return model
+
+
 st.set_page_config(page_title="Video Insights", layout="wide")
 st.title("🎬 Video Insights")
 
@@ -26,7 +35,7 @@ def init_model():
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")  # Using gemini-pro which is more widely available
+        model = genai.GenerativeModel("gemini-1.5-flash")  # Using a more recent and capable model
         return model
     except Exception as e:
         logger.error(f"Error initializing model: {str(e)}")
@@ -34,6 +43,7 @@ def init_model():
         return None
 
 # --- Utility: Download & Transcribe Video ---
+@st.cache_data(show_spinner=False) # Cache results to avoid re-processing the same URL
 def download_and_transcribe(video_url):
     """
     Downloads audio from a YouTube URL using yt-dlp, transcribes it, and returns the text and title.
@@ -64,7 +74,7 @@ def download_and_transcribe(video_url):
             video_title = info_dict.get('title', 'Untitled Video')
 
         # Transcribe the downloaded audio file
-        model = whisper.load_model("base")
+        model = load_whisper_model() # Use cached model
         result = model.transcribe(temp_audio_path)
 
         return result["text"], video_title
@@ -74,11 +84,13 @@ def download_and_transcribe(video_url):
         # Provide user-friendly error messages based on yt-dlp's output
         error_str = str(e).lower()
         if 'video unavailable' in error_str:
-            st.error("The video is unavailable. It may be private, deleted, or region-blocked.")
+            st.error("The video is unavailable. It may be private or deleted.")
         elif 'age restricted' in error_str:
             st.error("This video is age-restricted and cannot be processed without authentication.")
         elif 'private video' in error_str:
             st.error("This is a private video and cannot be accessed.")
+        elif 'not available in your country' in error_str:
+            st.error("This video is region-blocked and not available in your location.")
         else:
             st.error(f"Failed to download video. It may not exist or is restricted. Please try another URL.")
         return None, None
@@ -125,13 +137,14 @@ def text_to_audio(text, filename="summary.mp3"):
         return None
 
 # --- Check API Key Validity ---
+@st.cache_data # Cache the validation result for the given key
 def check_api_key(api_key):
     if not api_key:
         return False
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         response = model.generate_content("Hello")
         return True
     except Exception as e:
@@ -147,10 +160,10 @@ if video_url:
     # First check if API key is valid
     if not api_key:
         st.warning("Please enter your Gemini API key in the sidebar")
-    elif not check_api_key(api_key):
+    elif not check_api_key(api_key): # This will now use the cached result
         st.error("Invalid API key. Please check your Gemini API key and try again.")
     else:
-        with st.spinner("Downloading and transcribing video..."):
+        with st.spinner("Downloading and transcribing video... (This may take a moment for new videos)"):
             transcript, title = download_and_transcribe(video_url)
         
         if transcript and title:
