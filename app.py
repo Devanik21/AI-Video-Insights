@@ -1,14 +1,11 @@
 import streamlit as st
 import tempfile
 import os
-import base64
 import google.generativeai as genai
 from gtts import gTTS
 import whisper
-from pytube import YouTube
-import requests
+import yt_dlp
 import logging
-import re  # <-- Add for regex parsing
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,73 +34,62 @@ def init_model():
         return None
 
 # --- Utility: Download & Transcribe Video ---
-def extract_youtube_id(url):
+def download_and_transcribe(video_url):
     """
-    Extracts the YouTube video ID from various URL formats.
+    Downloads audio from a YouTube URL using yt-dlp, transcribes it, and returns the text and title.
     """
-    # Standard YouTube URL
-    match = re.match(r".*v=([a-zA-Z0-9_-]{11})", url)
-    if match:
-        return match.group(1)
-    # Short youtu.be URL
-    match = re.match(r".*youtu\.be/([a-zA-Z0-9_-]{11})", url)
-    if match:
-        return match.group(1)
-    return None
+    temp_audio_path = None
+    try:
+        # Create a temporary file to store the audio
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+            temp_audio_path = tmp.name
 
-def download_and_transcribe(video_url, max_attempts=3):
-    # Extract video ID robustly
-    video_id = extract_youtube_id(video_url)
-    if not video_id:
-        st.error("Please enter a valid YouTube URL (could not extract video ID)")
+        # yt-dlp options to download the best audio and convert it to mp3
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'outtmpl': temp_audio_path.replace('.mp3', ''), # yt-dlp adds the extension
+            'quiet': True,
+            'noprogress': True,
+            'noplaylist': True, # Ensure we only get one video
+        }
+
+        # Download the audio and extract info
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(video_url, download=True)
+            video_title = info_dict.get('title', 'Untitled Video')
+
+        # Transcribe the downloaded audio file
+        model = whisper.load_model("base")
+        result = model.transcribe(temp_audio_path)
+
+        return result["text"], video_title
+
+    except yt_dlp.utils.DownloadError as e:
+        logger.error(f"yt-dlp download error: {str(e)}")
+        # Provide user-friendly error messages based on yt-dlp's output
+        error_str = str(e).lower()
+        if 'video unavailable' in error_str:
+            st.error("The video is unavailable. It may be private, deleted, or region-blocked.")
+        elif 'age restricted' in error_str:
+            st.error("This video is age-restricted and cannot be processed without authentication.")
+        elif 'private video' in error_str:
+            st.error("This is a private video and cannot be accessed.")
+        else:
+            st.error(f"Failed to download video. It may not exist or is restricted. Please try another URL.")
         return None, None
-
-    # Reconstruct canonical URL for pytube
-    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
-
-    for attempt in range(max_attempts):
-        try:
-            # Download video
-            yt = YouTube(canonical_url)
-            # Prefer audio/mp4, fallback to any audio
-            audio_streams = yt.streams.filter(only_audio=True).order_by('abr').desc()
-            stream = None
-            for s in audio_streams:
-                if s.mime_type in ["audio/mp4", "audio/webm"]:
-                    stream = s
-                    break
-            if not stream:
-                st.error("Could not find a suitable audio stream for this video (no audio/mp4 or audio/webm found).")
-                return None, None
-
-            temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            stream.download(filename=temp_audio.name)
-
-            # Transcribe audio
-            model = whisper.load_model("base")
-            result = model.transcribe(temp_audio.name)
-
-            # Clean up temp file
-            os.remove(temp_audio.name)
-
-            return result["text"], yt.title
-        except Exception as e:
-            logger.error(f"Error in download_and_transcribe (attempt {attempt+1}/{max_attempts}): {str(e)}")
-            if attempt == max_attempts - 1:
-                error_str = str(e).lower()
-                if "regex_search" in error_str:
-                    st.error("Failed to process the YouTube link. Please check the URL format.")
-                elif "http error 400" in error_str:
-                    st.error("YouTube returned a 400 error. The video may not exist, is private, age-restricted, or region-blocked. Try another video.")
-                elif "video unavailable" in error_str or "private" in error_str:
-                    st.error("The video is unavailable. It may be private, deleted, or restricted. Try a different video.")
-                elif "age-restricted" in error_str or "sign in to confirm your age" in error_str:
-                    st.error("This video is age-restricted and cannot be processed. Please try a different video.")
-                else:
-                    st.error(f"Error processing video after {max_attempts} attempts: {str(e)}")
-                return None, None
-            import time
-            time.sleep(2)
+    except Exception as e:
+        logger.error(f"Error in download_and_transcribe: {str(e)}")
+        st.error(f"An unexpected error occurred during processing: {str(e)}")
+        return None, None
+    finally:
+        # Ensure the temporary file is cleaned up
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            os.remove(temp_audio_path)
 
 # --- Utility: Gemini Content Generator ---
 def gemini_generate(text, prompt, max_attempts=3):
