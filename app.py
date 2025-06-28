@@ -8,6 +8,7 @@ import whisper
 from pytube import YouTube
 import requests
 import logging
+import re  # <-- Add for regex parsing
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,35 +37,58 @@ def init_model():
         return None
 
 # --- Utility: Download & Transcribe Video ---
+def extract_youtube_id(url):
+    """
+    Extracts the YouTube video ID from various URL formats.
+    """
+    # Standard YouTube URL
+    match = re.match(r".*v=([a-zA-Z0-9_-]{11})", url)
+    if match:
+        return match.group(1)
+    # Short youtu.be URL
+    match = re.match(r".*youtu\.be/([a-zA-Z0-9_-]{11})", url)
+    if match:
+        return match.group(1)
+    return None
+
 def download_and_transcribe(video_url):
     try:
-        # Validate URL
-        if "youtube.com" not in video_url and "youtu.be" not in video_url:
-            st.error("Please enter a valid YouTube URL")
+        # Extract video ID robustly
+        video_id = extract_youtube_id(video_url)
+        if not video_id:
+            st.error("Please enter a valid YouTube URL (could not extract video ID)")
             return None, None
-        
+
+        # Reconstruct canonical URL for pytube
+        canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
         # Download video
-        yt = YouTube(video_url)
+        yt = YouTube(canonical_url)
         stream = yt.streams.filter(only_audio=True).first()
-        
+
         if not stream:
             st.error("Could not find an audio stream for this video")
             return None, None
-            
+
         temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         stream.download(filename=temp_audio.name)
-        
+
         # Transcribe audio
         model = whisper.load_model("base")
         result = model.transcribe(temp_audio.name)
-        
+
         # Clean up temp file
         os.remove(temp_audio.name)
-        
+
         return result["text"], yt.title
     except Exception as e:
         logger.error(f"Error in download_and_transcribe: {str(e)}")
-        st.error(f"Error processing video: {str(e)}")
+        if "regex_search" in str(e):
+            st.error("Failed to process the YouTube link. Please check the URL format.")
+        elif "HTTP Error 400" in str(e):
+            st.error("YouTube returned a 400 error. The video may not exist or is unavailable.")
+        else:
+            st.error(f"Error processing video: {str(e)}")
         return None, None
 
 # --- Utility: Gemini Content Generator ---
