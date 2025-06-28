@@ -28,7 +28,7 @@ def init_model():
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")  # Using gemini-pro which is more widely available
+        model = genai.GenerativeModel("gemini-2.5-flash")  # Using gemini-pro which is more widely available
         return model
     except Exception as e:
         logger.error(f"Error initializing model: {str(e)}")
@@ -107,7 +107,7 @@ def check_api_key(api_key):
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content("Hello")
         return True
     except Exception as e:
