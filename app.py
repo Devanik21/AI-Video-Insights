@@ -88,12 +88,15 @@ def download_and_transcribe(video_url):
         return result["text"], yt.title
     except Exception as e:
         logger.error(f"Error in download_and_transcribe: {str(e)}")
-        if "regex_search" in str(e):
+        error_str = str(e).lower()
+        if "regex_search" in error_str:
             st.error("Failed to process the YouTube link. Please check the URL format.")
-        elif "HTTP Error 400" in str(e):
-            st.error("YouTube returned a 400 error. The video may not exist, is private, age-restricted, or region-blocked.")
-        elif "Video unavailable" in str(e):
-            st.error("The video is unavailable. It may be private, deleted, or restricted.")
+        elif "http error 400" in error_str:
+            st.error("YouTube returned a 400 error. The video may not exist, is private, age-restricted, or region-blocked. Try another video.")
+        elif "video unavailable" in error_str or "private" in error_str:
+            st.error("The video is unavailable. It may be private, deleted, or restricted. Try a different video.")
+        elif "age-restricted" in error_str or "sign in to confirm your age" in error_str:
+            st.error("This video is age-restricted and cannot be processed. Please try a different video.")
         else:
             st.error(f"Error processing video: {str(e)}")
         return None, None
