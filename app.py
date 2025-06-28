@@ -51,55 +51,59 @@ def extract_youtube_id(url):
         return match.group(1)
     return None
 
-def download_and_transcribe(video_url):
-    try:
-        # Extract video ID robustly
-        video_id = extract_youtube_id(video_url)
-        if not video_id:
-            st.error("Please enter a valid YouTube URL (could not extract video ID)")
-            return None, None
-
-        # Reconstruct canonical URL for pytube
-        canonical_url = f"https://www.youtube.com/watch?v={video_id}"
-
-        # Download video
-        yt = YouTube(canonical_url)
-        # Prefer audio/mp4, fallback to any audio
-        audio_streams = yt.streams.filter(only_audio=True).order_by('abr').desc()
-        stream = None
-        for s in audio_streams:
-            if s.mime_type in ["audio/mp4", "audio/webm"]:
-                stream = s
-                break
-        if not stream:
-            st.error("Could not find a suitable audio stream for this video (no audio/mp4 or audio/webm found).")
-            return None, None
-
-        temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        stream.download(filename=temp_audio.name)
-
-        # Transcribe audio
-        model = whisper.load_model("base")
-        result = model.transcribe(temp_audio.name)
-
-        # Clean up temp file
-        os.remove(temp_audio.name)
-
-        return result["text"], yt.title
-    except Exception as e:
-        logger.error(f"Error in download_and_transcribe: {str(e)}")
-        error_str = str(e).lower()
-        if "regex_search" in error_str:
-            st.error("Failed to process the YouTube link. Please check the URL format.")
-        elif "http error 400" in error_str:
-            st.error("YouTube returned a 400 error. The video may not exist, is private, age-restricted, or region-blocked. Try another video.")
-        elif "video unavailable" in error_str or "private" in error_str:
-            st.error("The video is unavailable. It may be private, deleted, or restricted. Try a different video.")
-        elif "age-restricted" in error_str or "sign in to confirm your age" in error_str:
-            st.error("This video is age-restricted and cannot be processed. Please try a different video.")
-        else:
-            st.error(f"Error processing video: {str(e)}")
+def download_and_transcribe(video_url, max_attempts=3):
+    # Extract video ID robustly
+    video_id = extract_youtube_id(video_url)
+    if not video_id:
+        st.error("Please enter a valid YouTube URL (could not extract video ID)")
         return None, None
+
+    # Reconstruct canonical URL for pytube
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    for attempt in range(max_attempts):
+        try:
+            # Download video
+            yt = YouTube(canonical_url)
+            # Prefer audio/mp4, fallback to any audio
+            audio_streams = yt.streams.filter(only_audio=True).order_by('abr').desc()
+            stream = None
+            for s in audio_streams:
+                if s.mime_type in ["audio/mp4", "audio/webm"]:
+                    stream = s
+                    break
+            if not stream:
+                st.error("Could not find a suitable audio stream for this video (no audio/mp4 or audio/webm found).")
+                return None, None
+
+            temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            stream.download(filename=temp_audio.name)
+
+            # Transcribe audio
+            model = whisper.load_model("base")
+            result = model.transcribe(temp_audio.name)
+
+            # Clean up temp file
+            os.remove(temp_audio.name)
+
+            return result["text"], yt.title
+        except Exception as e:
+            logger.error(f"Error in download_and_transcribe (attempt {attempt+1}/{max_attempts}): {str(e)}")
+            if attempt == max_attempts - 1:
+                error_str = str(e).lower()
+                if "regex_search" in error_str:
+                    st.error("Failed to process the YouTube link. Please check the URL format.")
+                elif "http error 400" in error_str:
+                    st.error("YouTube returned a 400 error. The video may not exist, is private, age-restricted, or region-blocked. Try another video.")
+                elif "video unavailable" in error_str or "private" in error_str:
+                    st.error("The video is unavailable. It may be private, deleted, or restricted. Try a different video.")
+                elif "age-restricted" in error_str or "sign in to confirm your age" in error_str:
+                    st.error("This video is age-restricted and cannot be processed. Please try a different video.")
+                else:
+                    st.error(f"Error processing video after {max_attempts} attempts: {str(e)}")
+                return None, None
+            import time
+            time.sleep(2)
 
 # --- Utility: Gemini Content Generator ---
 def gemini_generate(text, prompt, max_attempts=3):
